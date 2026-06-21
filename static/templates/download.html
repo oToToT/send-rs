@@ -1,0 +1,22 @@
+{% extends "layout.html" %}
+{% block body %}<main class="download-main">
+  <section class="download-panel" data-file-id="{{ file_id }}">
+    <div class="download-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 15v4h14v-4"/></svg></div>
+    <span class="eyebrow">Secure transfer</span>
+    <h1>Preparing your download</h1>
+    {{ download_notice|safe }}
+    <p class="download-description">This file was shared privately with Send.</p>
+    <form id="password-form"{% if not password_required %} hidden{% endif %}>
+      <input id="autocomplete-decoy" type="password" hidden autocomplete="off">
+      <label for="password-input">Password</label>
+      <input id="password-input" name="password" type="password" autocomplete="current-password">
+      <button id="password-btn" type="submit">Unlock</button>
+      <label id="password-error" hidden>Incorrect password</label>
+    </form>
+    <button id="download-btn" type="button" hidden>Download file</button>
+    <p id="download-status" class="download-status" role="status" aria-live="polite"></p>
+    <input id="share-url" name="share-url" type="text" readonly value="" hidden>
+    <button id="qr-btn" type="button" hidden>QR code</button>
+  </section>
+</main>
+<script defer src="/download.js"></script>{% endblock %}

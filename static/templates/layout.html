@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="{{ robots }}">
+  <title>{{ title }}</title>
+  <meta name="description" content="{{ description }}">
+  <base href="/">
+  <link rel="icon" href="/favicon-32x32.png" type="image/png" sizes="32x32">
+  <link rel="manifest" href="/app.webmanifest">
+  <link rel="stylesheet" href="/inter.css">
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/ui.css">
+  <script>
+    (function () {
+      var preference = 'system';
+      try { preference = localStorage.getItem('send-theme') || 'system'; } catch (_) {}
+      var dark = preference === 'dark' ||
+        (preference === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      document.documentElement.dataset.themePreference = preference;
+    })();
+  </script>
+  <style>
+    :root { --color-primary: {{ primary }}; --color-primary-accent: {{ accent }}; }
+  </style>
+  <script>
+    var LIMITS={{ limits_json|safe }};
+    var WEB_UI={{ web_ui_json|safe }};
+    var DEFAULTS={{ defaults_json|safe }};
+    var PREFS={};
+    var downloadMetadata={{ download_metadata_json|safe }};
+  </script>
+  <script defer src="/theme.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="site-brand" href="/" aria-label="{{ brand }} home">
+      <span class="site-brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 15v4h14v-4"/></svg>
+      </span>
+      <strong>{{ brand }}</strong>
+    </a>
+  </header>
+  {% block body %}{% endblock %}
+  <footer class="site-footer">
+    <span>Private file sharing, made simple.</span>
+    <nav aria-label="Footer links">
+    <a href="{{ cli_url }}">Command Line Tool</a>
+    <a href="{{ source_url }}">Source Code</a>
+    </nav>
+  </footer>
+</body>
+</html>

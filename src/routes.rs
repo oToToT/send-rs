@@ -17,7 +17,7 @@ use serde_json::json;
 use tower_http::trace::TraceLayer;
 
 use crate::{
-    AppError, AppResult, auth, html, ids,
+    AppError, AppResult, assets, auth, html, ids,
     storage::{AppState, NewFile},
 };
 
@@ -201,19 +201,17 @@ async fn static_or_not_found(
         && !path
             .split('/')
             .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+        && let Some(bytes) = assets::get(path)
     {
-        let file = state.config.static_dir.join(path);
-        if let Ok(bytes) = tokio::fs::read(&file).await {
-            let content_type = mime_guess::from_path(&file)
-                .first_or_octet_stream()
-                .to_string();
-            return (
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, content_type)],
-                bytes,
-            )
-                .into_response();
-        }
+        let content_type = mime_guess::from_path(path)
+            .first_or_octet_stream()
+            .to_string();
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, content_type)],
+            bytes,
+        )
+            .into_response();
     }
     (StatusCode::NOT_FOUND, Html(html::not_found(&state.config))).into_response()
 }

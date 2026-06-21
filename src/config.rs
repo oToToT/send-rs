@@ -11,7 +11,6 @@ pub struct Config {
     pub base_url: String,
     pub detect_base_url: bool,
     pub file_dir: PathBuf,
-    pub static_dir: PathBuf,
     pub node_env: String,
     pub limits: Limits,
     pub defaults: Defaults,
@@ -134,9 +133,6 @@ impl Config {
         let file_dir = env::var("FILE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| env::temp_dir().join(format!("send-rs-{}", rand::random::<u32>())));
-        let static_dir = env::var("STATIC_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("static"));
         let node_env = get("NODE_ENV", "development");
 
         let limits = Limits {
@@ -200,7 +196,6 @@ impl Config {
             base_url,
             detect_base_url,
             file_dir,
-            static_dir,
             node_env,
             limits,
             defaults,

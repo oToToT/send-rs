@@ -1,0 +1,41 @@
+{% extends "layout.html" %}
+{% block body %}<main class="fallback-main">
+  <section class="fallback-hero">
+    <span class="eyebrow">Private by design</span>
+    <h1>{{ brand }}</h1>
+    <p>{{ description }}</p>
+    {{ main_notice|safe }}
+    <ul class="trust-list" aria-label="Service benefits">
+      <li>Encrypted in your browser</li>
+      <li>Links expire automatically</li>
+    </ul>
+  </section>
+  <section class="upload-zone" aria-labelledby="upload-heading">
+    <div class="section-heading">
+      <div><h2 id="upload-heading">Choose files</h2><p>Select files from your device to create a secure link.</p></div>
+    </div>
+    {{ upload_notice|safe }}
+    <p class="file-limit-info">Max file size: {{ max_file_size }}</p>
+    <input id="autocomplete-decoy" type="password" hidden autocomplete="off">
+    <div class="file-picker">
+      <strong>Drop files here</strong><span>or use the file chooser</span>
+      <input class="file-picker-input" id="file-upload" name="file-upload" type="file" multiple aria-describedby="file-selection-status">
+    </div>
+    <ul id="file-list" class="file-list" hidden></ul>
+    <p id="file-selection-status" class="file-selection-status" role="status" aria-live="polite">No files selected</p>
+    <div class="password-row">
+      <label><input id="add-password" name="add-password" type="checkbox"> Protect with password</label>
+      <div class="input-action" hidden><input id="password-input" name="password" type="password" autocomplete="new-password" aria-label="Password"><button id="password-preview-button" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
+    </div>
+    <div class="option-grid">
+      <label for="dlCount">Download limit<select id="dlCount" name="dlimit">{% for count in download_counts %}<option value="{{ count }}">{{ count }}</option>{% endfor %}</select></label>
+      <label for="timespan">Link expires<select id="timespan" name="timeLimit">{% for seconds, label in expire_options %}<option value="{{ seconds }}">{{ label }}</option>{% endfor %}</select></label>
+    </div>
+    <button id="upload-btn" type="button" disabled>Create secure link</button>
+  </section>
+  <section class="uploads-panel" aria-labelledby="uploads-heading">
+    <h2 id="uploads-heading">Your uploads</h2>
+    {{ uploads_notice|safe }}
+  </section>
+</main>
+<script defer src="/upload.js"></script>{% endblock %}

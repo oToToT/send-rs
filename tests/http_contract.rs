@@ -26,7 +26,6 @@ fn test_config(dir: std::path::PathBuf) -> Config {
         base_url: "https://send.example.test".into(),
         detect_base_url: false,
         file_dir: dir,
-        static_dir: std::path::PathBuf::from("static"),
         node_env: "test".into(),
         limits: send_rs::config::Limits {
             max_file_size: 1024,
@@ -217,6 +216,18 @@ async fn config_and_html_pages_expose_semantic_contract() {
     let body = body_text(response).await;
     assert!(body.contains("prefers-color-scheme: dark"));
     assert!(body.contains("send-theme"));
+
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/templates/layout.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     let response = router
         .clone()
