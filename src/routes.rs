@@ -10,7 +10,6 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
-use bytes::Bytes;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -18,8 +17,9 @@ use tower_http::trace::TraceLayer;
 
 use crate::{
     AppError, AppResult, assets, auth, html, ids,
-    storage::{AppState, NewFile},
+    storage::{AppState, NewFileRecord},
 };
+use tokio_util::io::ReaderStream;
 
 #[derive(Serialize)]
 struct ExistsResponse {
@@ -285,7 +285,7 @@ async fn api_metadata(
         Ok(record) => record,
         Err(response) => return response,
     };
-    let nonce = match state.store.rotate_nonce(&id).await {
+    let nonce = match state.store.rotate_nonce_if(&id, &record.nonce).await {
         Ok(nonce) => nonce,
         Err(err) => return err.into_response(),
     };
@@ -309,20 +309,25 @@ async fn api_download(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(response) = authorized_record_response(&state, &id, &headers).await {
-        return response;
-    }
-    let nonce = match state.store.rotate_nonce(&id).await {
+    let record = match authorized_record_response(&state, &id, &headers).await {
+        Ok(record) => record,
+        Err(response) => return response,
+    };
+    let nonce = match state.store.rotate_nonce_if(&id, &record.nonce).await {
         Ok(nonce) => nonce,
         Err(err) => return err.into_response(),
     };
-    let bytes = match state.store.read_blob(&id).await {
-        Ok(bytes) => bytes,
+    // Open before claiming: on Unix the open descriptor remains readable when
+    // a final-download claim atomically removes the directory entry.
+    let blob = match state.store.open_blob(&id).await {
+        Ok(blob) => blob,
         Err(err) => return err.into_response(),
     };
-    if let Err(err) = state.store.mark_download_complete(&id).await {
+    if let Err(err) = state.store.claim_download(&id).await {
         return err.into_response();
     }
+    let size = blob.size;
+    let body = Body::from_stream(ReaderStream::new(blob.file));
     (
         [
             (
@@ -333,8 +338,12 @@ async fn api_download(
                 header::WWW_AUTHENTICATE,
                 HeaderValue::from_str(&format!("send-v1 {nonce}")).unwrap(),
             ),
+            (
+                header::CONTENT_LENGTH,
+                HeaderValue::from_str(&size.to_string()).unwrap(),
+            ),
         ],
-        Bytes::from(bytes),
+        body,
     )
         .into_response()
 }
@@ -428,9 +437,7 @@ async fn verify_owner_body(
     id: &str,
     owner_token: &str,
 ) -> AppResult<crate::storage::FileRecord> {
-    let record = state.store.get(id).await.ok_or(AppError::NotFound)?;
-    auth::verify_owner(&record.owner, owner_token)?;
-    Ok(record)
+    state.store.verify_owner(id, owner_token).await
 }
 
 async fn ws_upload(
@@ -522,35 +529,66 @@ async fn handle_ws_upload(state: AppState, headers: HeaderMap, mut socket: WebSo
         return;
     }
 
-    let mut bytes = Vec::new();
+    let mut upload = match state.store.start_upload(&id).await {
+        Ok(upload) => upload,
+        Err(_) => {
+            let _ = socket
+                .send(Message::Text(json!({ "error": 500 }).to_string().into()))
+                .await;
+            return;
+        }
+    };
+    let mut eof = false;
     while let Some(message) = socket.next().await {
         match message {
-            Ok(Message::Binary(chunk)) if chunk.len() == 1 && chunk[0] == 0 => break,
+            Ok(Message::Binary(chunk)) if chunk.len() == 1 && chunk[0] == 0 => {
+                eof = true;
+                break;
+            }
             Ok(Message::Binary(chunk)) => {
-                bytes.extend_from_slice(&chunk);
-                if bytes.len() as u64 > encrypted_size_limit(state.config.limits.max_file_size) {
+                if upload.size().saturating_add(chunk.len() as u64)
+                    > encrypted_size_limit(state.config.limits.max_file_size)
+                {
+                    state.store.abort_upload(upload).await;
                     let _ = socket
                         .send(Message::Text(json!({ "error": 413 }).to_string().into()))
                         .await;
                     return;
                 }
+                if upload.write(&chunk).await.is_err() {
+                    state.store.abort_upload(upload).await;
+                    let _ = socket
+                        .send(Message::Text(json!({ "error": 500 }).to_string().into()))
+                        .await;
+                    return;
+                }
             }
-            Ok(Message::Close(_)) | Err(_) => return,
+            Ok(Message::Close(_)) | Err(_) => {
+                state.store.abort_upload(upload).await;
+                return;
+            }
             _ => {}
         }
     }
 
+    if !eof {
+        state.store.abort_upload(upload).await;
+        return;
+    }
+
     let result = state
         .store
-        .create(NewFile {
-            id,
-            owner,
-            metadata,
-            dlimit,
-            auth: auth_key.to_string(),
-            ttl: std::time::Duration::from_secs(time_limit),
-            bytes,
-        })
+        .commit_upload(
+            NewFileRecord {
+                id,
+                owner,
+                metadata,
+                dlimit,
+                auth: auth_key.to_string(),
+                ttl: std::time::Duration::from_secs(time_limit),
+            },
+            upload,
+        )
         .await;
 
     match result {

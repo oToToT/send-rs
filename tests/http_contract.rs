@@ -569,3 +569,81 @@ async fn metadata_and_blob_survive_process_restart() {
         b"encrypted file bytes"
     );
 }
+
+#[tokio::test]
+async fn storage_is_private_transactional_and_single_writer() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = test_config(dir.path().to_path_buf());
+    let state = AppState::new(config.clone()).await.unwrap();
+    let id = "dddddd1234567890";
+    let (owner, _) = create_file(&state, id, 1).await;
+
+    assert!(dir.path().join("metadata.sqlite3").is_file());
+    assert!(!dir.path().join("records").exists());
+    assert!(AppState::new(config.clone()).await.is_err());
+
+    let database = std::fs::read(dir.path().join("metadata.sqlite3")).unwrap();
+    assert!(
+        !database
+            .windows(owner.len())
+            .any(|bytes| bytes == owner.as_bytes()),
+        "owner tokens must not be stored verbatim"
+    );
+
+    drop(state);
+    let restarted = AppState::new(config).await.unwrap();
+    assert!(restarted.store.verify_owner(id, &owner).await.is_ok());
+}
+
+#[tokio::test]
+async fn final_download_claim_is_atomic() {
+    let (_dir, state) = test_state().await;
+    let id = "eeeeee1234567890";
+    create_file(&state, id, 1).await;
+
+    let first = {
+        let store = state.store.clone();
+        tokio::spawn(async move { store.claim_download(id).await })
+    };
+    let second = {
+        let store = state.store.clone();
+        tokio::spawn(async move { store.claim_download(id).await })
+    };
+    let results = [first.await.unwrap(), second.await.unwrap()];
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert!(state.store.get(id).await.is_none());
+}
+
+#[tokio::test]
+async fn startup_reconciliation_removes_incomplete_uploads() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = test_config(dir.path().to_path_buf());
+    let state = AppState::new(config.clone()).await.unwrap();
+    let mut upload = state.store.start_upload("ffffff1234567890").await.unwrap();
+    upload.write(b"partial encrypted upload").await.unwrap();
+    drop(upload);
+    drop(state);
+
+    let restarted = AppState::new(config).await.unwrap();
+    assert_eq!(
+        std::fs::read_dir(dir.path().join("tmp")).unwrap().count(),
+        0
+    );
+    drop(restarted);
+}
+
+#[tokio::test]
+async fn legacy_layout_is_rejected_without_deleting_it() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("records")).unwrap();
+    std::fs::create_dir_all(dir.path().join("files")).unwrap();
+    let legacy_blob = dir.path().join("files/abcdef1234567890");
+    std::fs::write(&legacy_blob, b"legacy encrypted bytes").unwrap();
+
+    let result = AppState::new(test_config(dir.path().to_path_buf())).await;
+    assert!(result.is_err());
+    assert_eq!(
+        std::fs::read(legacy_blob).unwrap(),
+        b"legacy encrypted bytes"
+    );
+}

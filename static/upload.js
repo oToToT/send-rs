@@ -36,14 +36,132 @@
     return b64Encode(combined);
   }
 
-  async function encryptFile(aesKey, file) {
+  async function encryptData(aesKey, data) {
     var iv = crypto.getRandomValues(new Uint8Array(12));
-    var fileData = await file.arrayBuffer();
-    var ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, aesKey, fileData);
+    var ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, aesKey, data);
     var combined = new Uint8Array(iv.length + ciphertext.byteLength);
     combined.set(iv, 0);
     combined.set(new Uint8Array(ciphertext), iv.length);
     return combined;
+  }
+
+  async function encryptFile(aesKey, file) {
+    var fileData = await file.arrayBuffer();
+    return encryptData(aesKey, fileData);
+  }
+
+  var crcTable = null;
+  function crc32(data) {
+    if (!crcTable) {
+      crcTable = [];
+      for (var i = 0; i < 256; i++) {
+        var c = i;
+        for (var j = 0; j < 8; j++) {
+          c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        }
+        crcTable[i] = c;
+      }
+    }
+    var crc = 0xFFFFFFFF;
+    for (var k = 0; k < data.length; k++) {
+      crc = crcTable[(crc ^ data[k]) & 0xFF] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  async function createZip(files) {
+    var encoder = new TextEncoder();
+    var localHeaders = [];
+    var centralEntries = [];
+    var dataChunks = [];
+    var offset = 0;
+
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      var nameBytes = encoder.encode(file.name);
+      var raw = await file.arrayBuffer();
+      var data = new Uint8Array(raw);
+      var crc = crc32(data);
+      var size = data.length;
+
+      var localHeader = new ArrayBuffer(30 + nameBytes.length);
+      var view = new DataView(localHeader);
+      view.setUint32(0, 0x04034b50, true);
+      view.setUint16(4, 20, true);
+      view.setUint16(6, 0, true);
+      view.setUint16(8, 0, true);
+      view.setUint16(10, 0, true);
+      view.setUint16(12, 0, true);
+      view.setUint32(14, crc, true);
+      view.setUint32(18, size, true);
+      view.setUint32(22, size, true);
+      view.setUint16(26, nameBytes.length, true);
+      view.setUint16(28, 0, true);
+      new Uint8Array(localHeader).set(nameBytes, 30);
+
+      localHeaders.push(localHeader);
+      centralEntries.push({ nameBytes: nameBytes, crc: crc, compressedSize: size, uncompressedSize: size, offset: offset });
+      dataChunks.push(data);
+      offset += localHeader.byteLength + size;
+    }
+
+    var centralOffset = offset;
+    var centralSize = 0;
+    var centralChunks = [];
+    for (var i = 0; i < centralEntries.length; i++) {
+      var entry = centralEntries[i];
+      var centralHeader = new ArrayBuffer(46 + entry.nameBytes.length);
+      var view = new DataView(centralHeader);
+      view.setUint32(0, 0x02014b50, true);
+      view.setUint16(4, 20, true);
+      view.setUint16(6, 20, true);
+      view.setUint16(8, 0, true);
+      view.setUint16(10, 0, true);
+      view.setUint16(12, 0, true);
+      view.setUint16(14, 0, true);
+      view.setUint32(16, entry.crc, true);
+      view.setUint32(20, entry.compressedSize, true);
+      view.setUint32(24, entry.uncompressedSize, true);
+      view.setUint16(28, entry.nameBytes.length, true);
+      view.setUint16(30, 0, true);
+      view.setUint16(32, 0, true);
+      view.setUint16(34, 0, true);
+      view.setUint16(36, 0, true);
+      view.setUint32(38, 0, true);
+      view.setUint32(42, entry.offset, true);
+      new Uint8Array(centralHeader).set(entry.nameBytes, 46);
+
+      centralChunks.push(centralHeader);
+      centralSize += centralHeader.byteLength;
+    }
+
+    var eocd = new ArrayBuffer(22);
+    var eocdView = new DataView(eocd);
+    eocdView.setUint32(0, 0x06054b50, true);
+    eocdView.setUint16(4, 0, true);
+    eocdView.setUint16(6, 0, true);
+    eocdView.setUint16(8, centralEntries.length, true);
+    eocdView.setUint16(10, centralEntries.length, true);
+    eocdView.setUint32(12, centralSize, true);
+    eocdView.setUint32(16, centralOffset, true);
+    eocdView.setUint16(20, 0, true);
+
+    var totalSize = offset + centralSize + 22;
+    var result = new Uint8Array(totalSize);
+    var pos = 0;
+    for (var i = 0; i < localHeaders.length; i++) {
+      result.set(new Uint8Array(localHeaders[i]), pos);
+      pos += localHeaders[i].byteLength;
+      result.set(dataChunks[i], pos);
+      pos += dataChunks[i].length;
+    }
+    for (var i = 0; i < centralChunks.length; i++) {
+      result.set(new Uint8Array(centralChunks[i]), pos);
+      pos += centralChunks[i].byteLength;
+    }
+    result.set(new Uint8Array(eocd), pos);
+
+    return result;
   }
 
   function initUploadPage() {
@@ -173,11 +291,26 @@
       try {
         var secretKey = crypto.getRandomValues(new Uint8Array(32));
         var aesKey = await deriveAesKey(secretKey);
-        var file = selectedFiles[0];
+
+        var fileData, fileName, fileType, fileSize;
+
+        if (selectedFiles.length === 1) {
+          var singleFile = selectedFiles[0];
+          fileName = singleFile.name;
+          fileType = singleFile.type || 'application/octet-stream';
+          fileSize = singleFile.size;
+          fileData = await singleFile.arrayBuffer();
+        } else {
+          uploadBtn.textContent = 'Creating archive…';
+          fileName = 'Send archive (' + selectedFiles.length + ' files).zip';
+          fileType = 'application/zip';
+          fileData = await createZip(selectedFiles);
+          fileSize = fileData.length;
+        }
 
         uploadBtn.textContent = 'Encrypting…';
-        var fileMetadata = await encryptMetadata(aesKey, file.name, file.type || 'application/octet-stream', file.size);
-        var encryptedFile = await encryptFile(aesKey, file);
+        var fileMetadata = await encryptMetadata(aesKey, fileName, fileType, fileSize);
+        var encryptedFile = await encryptData(aesKey, fileData);
 
         var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
         var wsUrl = protocol + '//' + location.host + '/api/ws';

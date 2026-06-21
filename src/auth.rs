@@ -48,6 +48,18 @@ pub fn verify_owner(stored: &str, provided: &str) -> AppResult<()> {
     }
 }
 
+pub fn owner_token_digest(key: &[u8], token: &str) -> AppResult<String> {
+    let mut mac = HmacSha256::new_from_slice(key)
+        .map_err(|_| AppError::Storage("invalid owner-token key".into()))?;
+    mac.update(token.as_bytes());
+    Ok(STANDARD_NO_PAD.encode(mac.finalize().into_bytes()))
+}
+
+pub fn verify_owner_digest(key: &[u8], stored: &str, provided: &str) -> AppResult<()> {
+    let digest = owner_token_digest(key, provided)?;
+    verify_owner(stored, &digest)
+}
+
 pub fn random_owner() -> String {
     ids::random_hex(10)
 }

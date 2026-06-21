@@ -46,3 +46,9 @@ impl From<std::io::Error> for AppError {
         AppError::Storage(value.to_string())
     }
 }
+
+impl From<rusqlite::Error> for AppError {
+    fn from(value: rusqlite::Error) -> Self {
+        AppError::Storage(value.to_string())
+    }
+}

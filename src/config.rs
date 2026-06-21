@@ -132,7 +132,7 @@ impl Config {
         let detect_base_url = parse_bool("DETECT_BASE_URL", true)?;
         let file_dir = env::var("FILE_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| env::temp_dir().join(format!("send-rs-{}", rand::random::<u32>())));
+            .unwrap_or_else(|_| PathBuf::from("./data"));
         let node_env = get("NODE_ENV", "development");
 
         let limits = Limits {

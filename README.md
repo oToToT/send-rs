@@ -18,7 +18,7 @@ an external object store.
 - Links limited by time and download count
 - Optional password protection
 - Multiple-file archives
-- Local filesystem persistence
+- Transactional SQLite metadata and atomic local blob persistence
 - Automatic light and dark themes
 - Compatibility with [`ffsend`](https://github.com/timvisee/ffsend)
 - Health, version, configuration, and PWA endpoints
@@ -49,6 +49,15 @@ PORT=1443 FILE_DIR=./data cargo run --release
 
 Uploaded data is written to `FILE_DIR` (`./data` by default). Browser assets
 and HTML templates under `static/` are embedded in the executable at build time.
+
+`FILE_DIR` contains `metadata.sqlite3`, private service key material, immutable
+encrypted blobs under `files/`, and in-progress uploads under `tmp/`. The server
+holds an exclusive lock on the directory; do not run multiple instances against
+the same local directory. Uploads and downloads are streamed, and incomplete
+uploads are removed during startup reconciliation.
+
+This storage format does not import the JSON sidecars used by earlier `send-rs`
+versions. Start with an empty `FILE_DIR` when upgrading to this version.
 
 ## Configuration
 
@@ -108,6 +117,11 @@ its internal modules are not reproduced.
 This rewrite is functional and covered by HTTP, persistence, authentication,
 and WebSocket contract tests. Before public deployment, place it behind a TLS
 reverse proxy and apply deployment-specific request-size and rate limits.
+
+Back up the entire `FILE_DIR` with an atomic filesystem snapshot, or stop the
+service before copying it. Do not independently copy a live SQLite database and
+its blob directory. Keep backup access restricted and test restoration; RAID
+alone is not a backup.
 
 ## Acknowledgements
 
