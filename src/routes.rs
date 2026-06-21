@@ -56,7 +56,7 @@ struct PasswordBody {
 #[derive(Deserialize)]
 struct ParamsBody {
     owner_token: String,
-    dlimit: u32,
+    download_limit: u32,
 }
 
 #[derive(Deserialize)]
@@ -379,11 +379,11 @@ async fn api_params(
     Json(body): Json<ParamsBody>,
 ) -> AppResult<StatusCode> {
     ids::validate_file_id(&id)?;
-    if body.dlimit == 0 || body.dlimit > state.config.limits.max_downloads {
-        return Err(AppError::BadRequest("dlimit out of range".into()));
+    if body.download_limit == 0 || body.download_limit > state.config.limits.max_downloads {
+        return Err(AppError::BadRequest("download_limit out of range".into()));
     }
     verify_owner_body(&state, &id, &body.owner_token).await?;
-    state.store.set_download_limit(&id, body.dlimit).await?;
+    state.store.set_download_limit(&id, body.download_limit).await?;
     Ok(StatusCode::OK)
 }
 

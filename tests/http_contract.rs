@@ -25,6 +25,7 @@ fn test_config(dir: std::path::PathBuf) -> Config {
         listen_port: 0,
         base_url: "https://send.example.test".into(),
         detect_base_url: false,
+        scheme: send_rs::config::Scheme::Auto,
         file_dir: dir,
         node_env: "test".into(),
         limits: send_rs::config::Limits {
@@ -436,7 +437,7 @@ async fn owner_operations_require_owner_token() {
                 .uri(format!("/api/params/{id}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "owner_token": owner, "dlimit": 2 }).to_string(),
+                    json!({ "owner_token": owner, "download_limit": 2 }).to_string(),
                 ))
                 .unwrap(),
         )

@@ -5,11 +5,19 @@ use serde::Serialize;
 use crate::{AppError, AppResult};
 
 #[derive(Clone, Debug)]
+pub enum Scheme {
+    Auto,
+    Http,
+    Https,
+}
+
+#[derive(Clone, Debug)]
 pub struct Config {
     pub listen_address: IpAddr,
     pub listen_port: u16,
     pub base_url: String,
     pub detect_base_url: bool,
+    pub scheme: Scheme,
     pub file_dir: PathBuf,
     pub node_env: String,
     pub limits: Limits,
@@ -129,6 +137,16 @@ impl Config {
         // Request-based detection makes the zero-configuration development server
         // return links that point back to the server the user actually opened.
         // Deployments with a canonical public URL can disable this and set BASE_URL.
+        let scheme = match get("SCHEME", "auto").to_ascii_lowercase().as_str() {
+            "auto" => Scheme::Auto,
+            "http" => Scheme::Http,
+            "https" => Scheme::Https,
+            other => {
+                return Err(AppError::Config(format!(
+                    "SCHEME must be 'auto', 'http', or 'https': got '{other}'"
+                )));
+            }
+        };
         let detect_base_url = parse_bool("DETECT_BASE_URL", true)?;
         let file_dir = env::var("FILE_DIR")
             .map(PathBuf::from)
@@ -198,6 +216,7 @@ impl Config {
             listen_port,
             base_url,
             detect_base_url,
+            scheme,
             file_dir,
             node_env,
             limits,
@@ -220,7 +239,17 @@ impl Config {
 
     pub fn base_url_for_headers(&self, host: Option<&str>, is_https: bool) -> String {
         if self.detect_base_url {
-            let scheme = if is_https { "https" } else { "http" };
+            let scheme = match self.scheme {
+                Scheme::Auto => {
+                    if is_https {
+                        "https"
+                    } else {
+                        "http"
+                    }
+                }
+                Scheme::Http => "http",
+                Scheme::Https => "https",
+            };
             format!("{scheme}://{}", host.unwrap_or("localhost"))
         } else {
             self.base_url.clone()
