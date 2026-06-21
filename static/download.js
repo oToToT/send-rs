@@ -1,16 +1,7 @@
 (function () {
   'use strict';
 
-  function b64Encode(bytes) {
-    return btoa(String.fromCharCode.apply(null, bytes))
-      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  }
-
-  function b64Decode(str) {
-    str = str.replace(/-/g, '+').replace(/_/g, '/');
-    while (str.length % 4) str += '=';
-    return Uint8Array.from(atob(str), function (c) { return c.charCodeAt(0); });
-  }
+  var sendCrypto = window.SendCrypto;
 
   function formatFileSize(bytes) {
     if (bytes === 0) return '0 B';
@@ -19,27 +10,6 @@
     var size = bytes;
     while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
     return i === 0 ? bytes + ' ' + units[i] : size.toFixed(1) + ' ' + units[i];
-  }
-
-  async function deriveAesKey(secretKey) {
-    var hkdfKey = await crypto.subtle.importKey('raw', secretKey, 'HKDF', false, ['deriveKey']);
-    return crypto.subtle.deriveKey(
-      { name: 'HKDF', salt: new Uint8Array(0), info: new TextEncoder().encode('send-encryption'), hash: 'SHA-256' },
-      hkdfKey,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['decrypt']
-    );
-  }
-
-  async function deriveHmacKey(secretKey) {
-    return crypto.subtle.importKey('raw', secretKey, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  }
-
-  function decryptData(aesKey, data) {
-    var iv = data.slice(0, 12);
-    var ciphertext = data.slice(12);
-    return crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, aesKey, ciphertext);
   }
 
   async function initDownloadPage() {
@@ -71,14 +41,12 @@
       return;
     }
 
-    var secretKey = b64Decode(keyB64);
-    var aesKey = null;
+    var secretKey = sendCrypto.b64Decode(keyB64);
     var metadata = null;
-    var hmacKey = null;
+    var authentication = null;
 
     try {
-      aesKey = await deriveAesKey(secretKey);
-      hmacKey = await deriveHmacKey(secretKey);
+      authentication = await sendCrypto.deriveAuthenticationBytes(secretKey);
     } catch (e) {
       showError('Cannot process encryption key');
       panel.dataset.downloadReady = 'true';
@@ -94,9 +62,9 @@
     }
 
     async function computeHmac(nonceB64) {
-      var nonce = b64Decode(nonceB64);
-      var sig = await crypto.subtle.sign('HMAC', hmacKey, nonce);
-      return b64Encode(new Uint8Array(sig));
+      var nonce = sendCrypto.b64Decode(nonceB64);
+      var sig = await sendCrypto.signNonce(authentication, nonce);
+      return sendCrypto.b64Encode(sig);
     }
 
     async function authFetch(path) {
@@ -110,11 +78,9 @@
       var res = await authFetch('/api/metadata/' + fileId);
       if (!res || !res.ok) return null;
       var data = await res.json();
-      var metaBytes = b64Decode(data.metadata);
+      var metaBytes = sendCrypto.b64Decode(data.metadata);
       try {
-        var decrypted = await decryptData(aesKey, metaBytes);
-        var text = new TextDecoder().decode(decrypted);
-        return JSON.parse(text);
+        return await sendCrypto.decryptMetadata(secretKey, metaBytes);
       } catch (e) {
         return null;
       }
@@ -129,7 +95,7 @@
       if (!res.ok) throw new Error('Download request failed (HTTP ' + res.status + ')');
       var buf = await res.arrayBuffer();
       try {
-        return await decryptData(aesKey, new Uint8Array(buf));
+        return await sendCrypto.decryptFile(secretKey, new Uint8Array(buf));
       } catch (e) {
         throw new Error('The downloaded file could not be decrypted');
       }
@@ -179,24 +145,50 @@
       }
     }
 
-    var metaData = await loadMetadata();
+    async function prepareDownload() {
+      var metaData = await loadMetadata();
+      if (!metaData) return false;
+
+      metadata = metaData;
+      var heading = panel.querySelector('h1');
+      if (heading) heading.textContent = 'Ready to download?';
+
+      var infoEl = document.createElement('p');
+      infoEl.className = 'download-info';
+      infoEl.textContent = metadata.name + ' (' + formatFileSize(metadata.size || 0) + ')';
+      panel.insertBefore(infoEl, downloadBtn || null);
+      showReady();
+      return true;
+    }
+
+    if (passwordForm && window.downloadMetadata && window.downloadMetadata.pwd) {
+      passwordForm.addEventListener('submit', async function (event) {
+        event.preventDefault();
+        passwordBtn.disabled = true;
+        passwordError.hidden = true;
+        try {
+          authentication = await sendCrypto.derivePasswordAuthenticationBytes(passwordInput.value, location.href);
+          if (await prepareDownload()) {
+            passwordForm.hidden = true;
+          } else {
+            passwordError.hidden = false;
+          }
+        } catch (_) {
+          passwordError.hidden = false;
+        } finally {
+          passwordBtn.disabled = false;
+        }
+      });
+      panel.dataset.downloadReady = 'true';
+      return;
+    }
+
+    var metaData = await prepareDownload();
     if (!metaData) {
       showError('Could not load file information');
       panel.dataset.downloadReady = 'true';
       return;
     }
-
-    metadata = metaData;
-
-    var heading = panel.querySelector('h1');
-    if (heading) heading.textContent = 'Ready to download?';
-
-    var infoEl = document.createElement('p');
-    infoEl.className = 'download-info';
-    infoEl.textContent = metadata.name + ' (' + formatFileSize(metadata.size || 0) + ')';
-    panel.insertBefore(infoEl, downloadBtn || null);
-
-    showReady();
     panel.dataset.downloadReady = 'true';
   }
 

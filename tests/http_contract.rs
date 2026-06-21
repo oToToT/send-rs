@@ -158,6 +158,7 @@ async fn config_and_html_pages_expose_semantic_contract() {
     assert!(body.contains(r#"href="/favicon-32x32.png""#));
     assert!(body.contains(r#"<link rel="stylesheet" href="/ui.css">"#));
     assert!(body.contains(r#"<script defer src="/theme.js"></script>"#));
+    assert!(body.contains(r#"<script defer src="/send-crypto.js"></script>"#));
     assert!(body.contains(r#"<script defer src="/upload.js"></script>"#));
 
     let response = router
@@ -178,6 +179,15 @@ async fn config_and_html_pages_expose_semantic_contract() {
 
     let upload_script = std::fs::read_to_string("static/upload.js").unwrap();
     assert!(!upload_script.contains("fileInput.click()"));
+    let crypto_script = std::fs::read_to_string("static/send-crypto.js").unwrap();
+    assert!(crypto_script.contains("Content-Encoding: aes128gcm"));
+    assert!(crypto_script.contains("info: encoder.encode('authentication')"));
+    assert!(crypto_script.contains("info: encoder.encode('metadata')"));
+    assert!(!crypto_script.contains("send-encryption"));
+    assert!(!crypto_script.contains("AES-GCM', length: 256"));
+    assert!(upload_script.contains("deriveAuthenticationBytes(secretKey)"));
+    let download_script = std::fs::read_to_string("static/download.js").unwrap();
+    assert!(download_script.contains("decryptFile(secretKey"));
     let theme_script = std::fs::read_to_string("static/theme.js").unwrap();
     assert!(!theme_script.contains("file-upload"));
     assert!(!theme_script.contains("installFallbackInteractions"));

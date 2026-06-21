@@ -383,7 +383,10 @@ async fn api_params(
         return Err(AppError::BadRequest("download_limit out of range".into()));
     }
     verify_owner_body(&state, &id, &body.owner_token).await?;
-    state.store.set_download_limit(&id, body.download_limit).await?;
+    state
+        .store
+        .set_download_limit(&id, body.download_limit)
+        .await?;
     Ok(StatusCode::OK)
 }
 

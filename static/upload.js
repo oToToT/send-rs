@@ -1,10 +1,7 @@
 (function () {
   'use strict';
 
-  function b64Encode(bytes) {
-    return btoa(String.fromCharCode.apply(null, bytes))
-      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  }
+  var sendCrypto = window.SendCrypto;
 
   function formatFileSize(bytes) {
     if (bytes === 0) return '0 B';
@@ -13,41 +10,6 @@
     var size = bytes;
     while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
     return i === 0 ? bytes + ' ' + units[i] : size.toFixed(1) + ' ' + units[i];
-  }
-
-  async function deriveAesKey(secretKey) {
-    var hkdfKey = await crypto.subtle.importKey('raw', secretKey, 'HKDF', false, ['deriveKey']);
-    return crypto.subtle.deriveKey(
-      { name: 'HKDF', salt: new Uint8Array(0), info: new TextEncoder().encode('send-encryption'), hash: 'SHA-256' },
-      hkdfKey,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt']
-    );
-  }
-
-  async function encryptMetadata(aesKey, name, type, size) {
-    var iv = crypto.getRandomValues(new Uint8Array(12));
-    var plaintext = new TextEncoder().encode(JSON.stringify({ name: name, type: type, size: size }));
-    var ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, aesKey, plaintext);
-    var combined = new Uint8Array(iv.length + ciphertext.byteLength);
-    combined.set(iv, 0);
-    combined.set(new Uint8Array(ciphertext), iv.length);
-    return b64Encode(combined);
-  }
-
-  async function encryptData(aesKey, data) {
-    var iv = crypto.getRandomValues(new Uint8Array(12));
-    var ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, aesKey, data);
-    var combined = new Uint8Array(iv.length + ciphertext.byteLength);
-    combined.set(iv, 0);
-    combined.set(new Uint8Array(ciphertext), iv.length);
-    return combined;
-  }
-
-  async function encryptFile(aesKey, file) {
-    var fileData = await file.arrayBuffer();
-    return encryptData(aesKey, fileData);
   }
 
   var crcTable = null;
@@ -289,8 +251,7 @@
       if (prevError) prevError.remove();
 
       try {
-        var secretKey = crypto.getRandomValues(new Uint8Array(32));
-        var aesKey = await deriveAesKey(secretKey);
+        var secretKey = crypto.getRandomValues(new Uint8Array(16));
 
         var fileData, fileName, fileType, fileSize;
 
@@ -309,8 +270,16 @@
         }
 
         uploadBtn.textContent = 'Encrypting…';
-        var fileMetadata = await encryptMetadata(aesKey, fileName, fileType, fileSize);
-        var encryptedFile = await encryptData(aesKey, fileData);
+        var fileMetadata = await sendCrypto.encryptMetadata(secretKey, {
+          name: fileName,
+          type: fileType,
+          size: fileSize,
+          manifest: {
+            files: [{ name: fileName, type: fileType, size: fileSize }]
+          }
+        });
+        var encryptedFile = await sendCrypto.encryptFile(secretKey, fileData);
+        var authentication = await sendCrypto.deriveAuthenticationBytes(secretKey);
 
         var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
         var wsUrl = protocol + '//' + location.host + '/api/ws';
@@ -320,6 +289,8 @@
           var ws = new WebSocket(wsUrl);
           ws.binaryType = 'arraybuffer';
           var shareUrl = null;
+          var uploadId = null;
+          var ownerToken = null;
           var timeout = setTimeout(function () {
             ws.close();
             reject(new Error('Upload timed out'));
@@ -327,8 +298,8 @@
 
           ws.onopen = function () {
             ws.send(JSON.stringify({
-              fileMetadata: fileMetadata,
-              authorization: 'send-v1 ' + b64Encode(secretKey),
+              fileMetadata: sendCrypto.b64Encode(fileMetadata),
+              authorization: 'send-v1 ' + sendCrypto.b64Encode(authentication),
               timeLimit: parseInt(timespan ? timespan.value : 86400, 10),
               dlimit: parseInt(dlCount ? dlCount.value : 1, 10)
             }));
@@ -339,13 +310,15 @@
             try {
               var msg = JSON.parse(event.data);
               if (msg.url) {
-                shareUrl = msg.url + '#' + b64Encode(secretKey);
+                shareUrl = msg.url + '#' + sendCrypto.b64Encode(secretKey);
+                uploadId = msg.id;
+                ownerToken = msg.ownerToken;
                 ws.send(encryptedFile);
                 ws.send(new Uint8Array([0]));
               } else if (msg.ok === true) {
                 clearTimeout(timeout);
                 ws.close();
-                resolve(shareUrl);
+                resolve({ url: shareUrl, id: uploadId, ownerToken: ownerToken });
               } else if (msg.error) {
                 clearTimeout(timeout);
                 ws.close();
@@ -360,6 +333,22 @@
           ws.onerror = function () { clearTimeout(timeout); reject(new Error('Connection failed')); };
           ws.onclose = function () { clearTimeout(timeout); reject(new Error('Connection closed')); };
         });
+
+        if (passwordToggle && passwordToggle.checked && passwordInput.value) {
+          var passwordAuthentication = await sendCrypto.derivePasswordAuthenticationBytes(
+            passwordInput.value,
+            result.url
+          );
+          var passwordResponse = await fetch('/api/password/' + result.id, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              owner_token: result.ownerToken,
+              auth: sendCrypto.b64Encode(passwordAuthentication)
+            })
+          });
+          if (!passwordResponse.ok) throw new Error('Could not set upload password');
+        }
 
         selectedFiles = [];
         renderFileList();
@@ -377,8 +366,8 @@
 
         var shareInput = document.getElementById('share-url');
         var openLink = document.getElementById('open-link');
-        shareInput.value = result;
-        openLink.href = result;
+        shareInput.value = result.url;
+        openLink.href = result.url;
 
         document.getElementById('copy-btn').addEventListener('click', function () {
           var self = this;
