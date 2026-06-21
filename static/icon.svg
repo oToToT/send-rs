@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Send</title>
+  <rect x="7" y="10" width="34" height="42" rx="8" fill="#17324d"/>
+  <rect x="23" y="12" width="34" height="42" rx="8" fill="#12a594"/>
+  <path d="M17 32h27m-8-8 8 8-8 8" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"/>
+  <circle cx="51" cy="49" r="6" fill="#ff6b5e" stroke="#fff" stroke-width="3"/>
+</svg>
