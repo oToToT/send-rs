@@ -156,7 +156,10 @@ impl Config {
             footer_donate_url: get("SEND_FOOTER_DONATE_URL", ""),
             footer_cli_url: get("SEND_FOOTER_CLI_URL", "https://github.com/timvisee/ffsend"),
             footer_dmca_url: get("SEND_FOOTER_DMCA_URL", ""),
-            footer_source_url: get("SEND_FOOTER_SOURCE_URL", "https://github.com/timvisee/send"),
+            footer_source_url: get(
+                "SEND_FOOTER_SOURCE_URL",
+                "https://github.com/oToToT/send-rs",
+            ),
             custom_footer_text: get("CUSTOM_FOOTER_TEXT", ""),
             custom_footer_url: get("CUSTOM_FOOTER_URL", ""),
             main_notice_html: get("SEND_MAIN_NOTICE_HTML", ""),
