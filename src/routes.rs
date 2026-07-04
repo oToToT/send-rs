@@ -7,7 +7,7 @@ use axum::{
         OriginalUri, Path, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{HeaderMap, HeaderValue, Request, StatusCode, header},
+    http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode, header},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
@@ -77,7 +77,8 @@ struct WsInit {
 }
 
 pub fn app(state: AppState) -> Router {
-    Router::new()
+    let trace_requests = !state.config.node_env.eq_ignore_ascii_case("production");
+    let router = Router::new()
         .route("/", get(home))
         .route("/download/{id}", get(download_page))
         .route("/download/{id}/", get(download_page))
@@ -101,8 +102,13 @@ pub fn app(state: AppState) -> Router {
         .route("/api/info/{id}", post(api_info))
         .fallback(static_or_not_found)
         .with_state(state)
-        .layer(middleware::from_fn(no_cache_headers))
-        .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn(no_cache_headers));
+
+    if trace_requests {
+        router.layer(TraceLayer::new_for_http())
+    } else {
+        router
+    }
 }
 
 async fn no_cache_headers(request: Request<Body>, next: Next) -> Response {
@@ -116,6 +122,20 @@ async fn no_cache_headers(request: Request<Body>, next: Next) -> Response {
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        HeaderName::from_static("x-frame-options"),
+        HeaderValue::from_static("DENY"),
+    );
+    headers.insert(
+        HeaderName::from_static("referrer-policy"),
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static(
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
+        ),
     );
     response
 }

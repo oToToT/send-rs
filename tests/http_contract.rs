@@ -148,6 +148,8 @@ async fn config_and_html_pages_expose_semantic_contract() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().contains_key("content-security-policy"));
+    assert_eq!(response.headers().get("x-frame-options").unwrap(), "DENY");
     let body = body_text(response).await;
     assert!(body.contains(r#"id="file-upload""#));
     assert!(body.contains(r#"<div class="file-picker">"#));

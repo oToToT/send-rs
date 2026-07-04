@@ -70,6 +70,7 @@ Configuration is provided through environment variables.
 | `BASE_URL` | `http://localhost:1443` | Canonical public URL used when URL detection is disabled |
 | `DETECT_BASE_URL` | `true` | Derive generated links from request headers |
 | `FILE_DIR` | `./data` | Encrypted file and metadata directory |
+| `NODE_ENV` | `development` | Set to `production` to disable app request-path trace logging |
 | `MAX_FILE_SIZE` | `2684354560` | Maximum encrypted upload size in bytes |
 | `MAX_DOWNLOADS` | `100` | Maximum download limit |
 | `MAX_EXPIRE_SECONDS` | `604800` | Maximum link lifetime |
