@@ -438,6 +438,117 @@ async fn exists_metadata_download_and_final_delete_match_contract() {
 }
 
 #[tokio::test]
+async fn legacy_password_auth_key_remains_compatible() {
+    let (_dir, state) = test_state().await;
+    let id = "aaaaaa1234567890";
+    let (_owner, auth_key) = create_file(&state, id, 2).await;
+    state
+        .store
+        .set_password(id, auth_key.clone())
+        .await
+        .unwrap();
+    let router = app(state);
+
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/exists/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let nonce = response
+        .headers()
+        .get(header::WWW_AUTHENTICATE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .strip_prefix("send-v1 ")
+        .unwrap()
+        .to_string();
+    let body = body_json(response).await;
+    assert_eq!(body["requiresPassword"], true);
+    assert!(body.get("passwordKdf").is_none());
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/metadata/{id}"))
+                .header(header::AUTHORIZATION, auth_header(&auth_key, &nonce))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn repeated_failed_password_auth_is_rate_limited() {
+    let (_dir, state) = test_state().await;
+    let id = "ababab1234567890";
+    create_file(&state, id, 2).await;
+    state
+        .store
+        .set_password(id, URL_SAFE_NO_PAD.encode([0xee_u8; 32]))
+        .await
+        .unwrap();
+    let router = app(state);
+
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/exists/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let nonce = response
+        .headers()
+        .get(header::WWW_AUTHENTICATE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .strip_prefix("send-v1 ")
+        .unwrap()
+        .to_string();
+    let wrong_auth = auth_header(&URL_SAFE_NO_PAD.encode([0xdd_u8; 32]), &nonce);
+
+    for _ in 0..6 {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/metadata/{id}"))
+                    .header(header::AUTHORIZATION, &wrong_auth)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/metadata/{id}"))
+                .header(header::AUTHORIZATION, &wrong_auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(response.headers().contains_key(header::RETRY_AFTER));
+}
+
+#[tokio::test]
 async fn owner_operations_require_owner_token() {
     let (_dir, state) = test_state().await;
     let id = "bbbbbb1234567890";

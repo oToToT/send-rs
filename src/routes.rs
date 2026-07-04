@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use axum::{
     Json, Router,
     body::Body,
@@ -20,6 +22,8 @@ use crate::{
     storage::{AppState, NewFileRecord},
 };
 use tokio_util::io::ReaderStream;
+
+const MAX_AUTH_VALUE_LEN: usize = 256;
 
 #[derive(Serialize)]
 struct ExistsResponse {
@@ -365,8 +369,11 @@ async fn api_password(
     Json(body): Json<PasswordBody>,
 ) -> AppResult<StatusCode> {
     ids::validate_file_id(&id)?;
-    if body.auth.is_empty() {
-        return Err(AppError::BadRequest("auth is required".into()));
+    if body.auth.is_empty()
+        || body.auth.len() > MAX_AUTH_VALUE_LEN
+        || !auth::valid_stored_auth(&body.auth)
+    {
+        return Err(AppError::BadRequest("auth is invalid".into()));
     }
     verify_owner_body(&state, &id, &body.owner_token).await?;
     state.store.set_password(&id, body.auth).await?;
@@ -417,13 +424,33 @@ async fn authorized_record_response(
         Some(record) => record,
         None => return Err(AppError::NotFound.into_response()),
     };
+    if record.pwd
+        && let Some(retry_after) = state.auth_throttle.retry_after(id)
+    {
+        return Err(rate_limited_response(&record.nonce, retry_after));
+    }
     let provided = match auth::parse_send_v1(headers) {
         Ok(provided) => provided,
-        Err(_) => return Err(challenge_response(&record.nonce)),
+        Err(_) => {
+            if record.pwd {
+                state.auth_throttle.record_failure(id);
+            }
+            return Err(challenge_response(&record.nonce));
+        }
     };
     match auth::verify_hmac(&record.auth, &record.nonce, &provided) {
-        Ok(()) => Ok(record),
-        Err(_) => Err(challenge_response(&record.nonce)),
+        Ok(()) => {
+            if record.pwd {
+                state.auth_throttle.record_success(id);
+            }
+            Ok(record)
+        }
+        Err(_) => {
+            if record.pwd {
+                state.auth_throttle.record_failure(id);
+            }
+            Err(challenge_response(&record.nonce))
+        }
     }
 }
 
@@ -431,6 +458,18 @@ fn challenge_response(nonce: &str) -> Response {
     (
         StatusCode::UNAUTHORIZED,
         [(header::WWW_AUTHENTICATE, format!("send-v1 {nonce}"))],
+    )
+        .into_response()
+}
+
+fn rate_limited_response(nonce: &str, retry_after: Duration) -> Response {
+    let seconds = retry_after.as_secs().max(1).to_string();
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [
+            (header::WWW_AUTHENTICATE, format!("send-v1 {nonce}")),
+            (header::RETRY_AFTER, seconds),
+        ],
     )
         .into_response()
 }

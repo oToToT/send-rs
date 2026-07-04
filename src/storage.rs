@@ -19,6 +19,7 @@ use crate::{AppError, AppResult, Config, auth, ids};
 pub struct AppState {
     pub config: Arc<Config>,
     pub store: Arc<Store>,
+    pub auth_throttle: Arc<auth::AuthThrottle>,
 }
 
 impl AppState {
@@ -28,6 +29,7 @@ impl AppState {
         Ok(Self {
             config: Arc::new(config),
             store,
+            auth_throttle: Arc::new(auth::AuthThrottle::default()),
         })
     }
 }

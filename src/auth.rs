@@ -1,3 +1,9 @@
+use std::{
+    collections::HashMap,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
+
 use axum::http::{HeaderMap, header};
 use base64::{
     Engine,
@@ -62,6 +68,60 @@ pub fn verify_owner_digest(key: &[u8], stored: &str, provided: &str) -> AppResul
 
 pub fn random_owner() -> String {
     ids::random_hex(10)
+}
+
+pub fn valid_stored_auth(value: &str) -> bool {
+    decode_base64(value).is_some_and(|key| (16..=128).contains(&key.len()))
+}
+
+#[derive(Default)]
+pub struct AuthThrottle {
+    attempts: Mutex<HashMap<String, Attempt>>,
+}
+
+#[derive(Clone, Copy)]
+struct Attempt {
+    failures: u32,
+    blocked_until: Instant,
+}
+
+impl AuthThrottle {
+    pub fn retry_after(&self, id: &str) -> Option<Duration> {
+        let now = Instant::now();
+        let attempts = self.attempts.lock().ok()?;
+        attempts.get(id).and_then(|attempt| {
+            if attempt.blocked_until > now {
+                Some(attempt.blocked_until.duration_since(now))
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn record_success(&self, id: &str) {
+        if let Ok(mut attempts) = self.attempts.lock() {
+            attempts.remove(id);
+        }
+    }
+
+    pub fn record_failure(&self, id: &str) {
+        const FREE_FAILURES: u32 = 5;
+        const MAX_BACKOFF_SECS: u64 = 60;
+
+        let now = Instant::now();
+        if let Ok(mut attempts) = self.attempts.lock() {
+            let attempt = attempts.entry(id.to_owned()).or_insert(Attempt {
+                failures: 0,
+                blocked_until: now,
+            });
+            attempt.failures = attempt.failures.saturating_add(1);
+            if attempt.failures > FREE_FAILURES {
+                let exponent = (attempt.failures - FREE_FAILURES - 1).min(5);
+                let seconds = (1_u64 << exponent).min(MAX_BACKOFF_SECS);
+                attempt.blocked_until = now + Duration::from_secs(seconds);
+            }
+        }
+    }
 }
 
 fn random_bytes(len: usize) -> Vec<u8> {
