@@ -23,7 +23,10 @@ use crate::{
 };
 use tokio_util::io::ReaderStream;
 
+const MAX_METADATA_B64_LEN: usize = 64 * 1024;
 const MAX_AUTH_VALUE_LEN: usize = 256;
+const WS_INIT_TIMEOUT: Duration = Duration::from_secs(10);
+const WS_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Serialize)]
 struct ExistsResponse {
@@ -490,8 +493,20 @@ async fn ws_upload(
     ws.on_upgrade(move |socket| handle_ws_upload(state, headers, socket))
 }
 
+async fn timeout_next_message(
+    socket: &mut WebSocket,
+    timeout: Duration,
+) -> Option<Result<Message, axum::Error>> {
+    tokio::time::timeout(timeout, socket.next())
+        .await
+        .ok()
+        .flatten()
+}
+
 async fn handle_ws_upload(state: AppState, headers: HeaderMap, mut socket: WebSocket) {
-    let Some(Ok(Message::Text(init_raw))) = socket.next().await else {
+    let Some(Ok(Message::Text(init_raw))) =
+        timeout_next_message(&mut socket, WS_INIT_TIMEOUT).await
+    else {
         let _ = socket
             .send(Message::Text(json!({ "error": 400 }).to_string().into()))
             .await;
@@ -526,7 +541,9 @@ async fn handle_ws_upload(state: AppState, headers: HeaderMap, mut socket: WebSo
 
     let _bearer_seen = init.bearer.as_deref();
     if metadata.is_empty()
+        || metadata.len() > MAX_METADATA_B64_LEN
         || authorization.is_empty()
+        || authorization.len() > MAX_AUTH_VALUE_LEN
         || time_limit == 0
         || time_limit > state.config.limits.max_expire_seconds
         || dlimit == 0
@@ -544,6 +561,12 @@ async fn handle_ws_upload(state: AppState, headers: HeaderMap, mut socket: WebSo
             .await;
         return;
     };
+    if !auth::valid_stored_auth(auth_key) {
+        let _ = socket
+            .send(Message::Text(json!({ "error": 400 }).to_string().into()))
+            .await;
+        return;
+    }
 
     let id = ids::random_hex(8);
     let owner = auth::random_owner();
@@ -581,7 +604,7 @@ async fn handle_ws_upload(state: AppState, headers: HeaderMap, mut socket: WebSo
         }
     };
     let mut eof = false;
-    while let Some(message) = socket.next().await {
+    while let Some(message) = timeout_next_message(&mut socket, WS_IDLE_TIMEOUT).await {
         match message {
             Ok(Message::Binary(chunk)) if chunk.len() == 1 && chunk[0] == 0 => {
                 eof = true;
