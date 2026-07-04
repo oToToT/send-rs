@@ -40,9 +40,9 @@ pub fn home(config: &Config) -> String {
         "all,noarchive",
         &json!({}),
         json!({
-            "main_notice": config.web_ui.main_notice_html,
-            "upload_notice": config.web_ui.upload_area_notice_html,
-            "uploads_notice": config.web_ui.uploads_list_notice_html,
+            "main_notice": sanitize_notice(&config.web_ui.main_notice_html),
+            "upload_notice": sanitize_notice(&config.web_ui.upload_area_notice_html),
+            "uploads_notice": sanitize_notice(&config.web_ui.uploads_list_notice_html),
             "max_file_size": format_file_size(config.limits.max_file_size),
             "download_counts": config.defaults.download_counts,
             "expire_options": expire_options,
@@ -59,7 +59,7 @@ pub fn download(config: &Config, id: &str, nonce: &str, pwd: bool) -> String {
         &json!({ "nonce": nonce, "pwd": pwd }),
         json!({
             "file_id": id,
-            "download_notice": config.web_ui.download_notice_html,
+            "download_notice": sanitize_notice(&config.web_ui.download_notice_html),
             "password_required": pwd,
         }),
     )
@@ -119,7 +119,7 @@ fn render_page(
         "primary": config.web_ui.ui_color_primary,
         "accent": config.web_ui.ui_color_accent,
         "limits_json": js_json(&config.limits),
-        "web_ui_json": js_json(&config.web_ui),
+        "web_ui_json": js_json(&config.web_ui.sanitized()),
         "defaults_json": js_json(&config.defaults),
         "download_metadata_json": js_json(download_metadata),
         "brand": config.web_ui.custom_title,
@@ -154,6 +154,10 @@ fn templates() -> &'static Environment<'static> {
         }
         environment
     })
+}
+
+fn sanitize_notice(value: &str) -> String {
+    ammonia::clean(value)
 }
 
 fn js_json<T: serde::Serialize>(value: &T) -> String {

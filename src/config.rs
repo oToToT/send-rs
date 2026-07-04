@@ -228,7 +228,7 @@ impl Config {
     pub fn client_config(&self) -> ClientConfig {
         ClientConfig {
             limits: self.limits.clone(),
-            web_ui: self.web_ui.clone(),
+            web_ui: self.web_ui.sanitized(),
             defaults: self.defaults.clone(),
         }
     }
@@ -254,6 +254,17 @@ impl Config {
         } else {
             self.base_url.clone()
         }
+    }
+}
+
+impl WebUi {
+    pub fn sanitized(&self) -> Self {
+        let mut web_ui = self.clone();
+        web_ui.main_notice_html = ammonia::clean(&web_ui.main_notice_html);
+        web_ui.upload_area_notice_html = ammonia::clean(&web_ui.upload_area_notice_html);
+        web_ui.uploads_list_notice_html = ammonia::clean(&web_ui.uploads_list_notice_html);
+        web_ui.download_notice_html = ammonia::clean(&web_ui.download_notice_html);
+        web_ui
     }
 }
 

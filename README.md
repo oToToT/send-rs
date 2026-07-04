@@ -83,7 +83,8 @@ Configuration is provided through environment variables.
 | `UI_COLOR_ACCENT` | `#003eaa` | Accent interface color |
 
 Additional footer and notice variables are documented in the `/config`
-response.
+response. Configured notice HTML is sanitized before being rendered or exposed
+to clients.
 
 When `DETECT_BASE_URL` is enabled behind a reverse proxy, sanitize or replace
 forwarded headers at the proxy boundary.

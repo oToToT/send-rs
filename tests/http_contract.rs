@@ -298,6 +298,25 @@ async fn config_and_html_pages_expose_semantic_contract() {
 }
 
 #[tokio::test]
+async fn configured_notice_html_is_sanitized() {
+    let (_dir, mut state) = test_state().await;
+    std::sync::Arc::make_mut(&mut state.config).web_ui.main_notice_html =
+        r#"<script>alert(1)</script><strong>Safe</strong><a href="javascript:alert(1)" onclick="alert(2)">link</a>"#
+            .into();
+    let response = app(state)
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_text(response).await;
+    assert!(body.contains("<strong>Safe</strong>"));
+    assert!(body.contains(">link</a>"));
+    assert!(!body.contains("alert(1)"));
+    assert!(!body.contains("javascript:"));
+    assert!(!body.contains("onclick"));
+}
+
+#[tokio::test]
 async fn exists_metadata_download_and_final_delete_match_contract() {
     let (_dir, state) = test_state().await;
     let id = "abcdef1234567890";
