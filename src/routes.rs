@@ -12,6 +12,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
+use base64::Engine;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -102,7 +103,8 @@ pub fn app(state: AppState) -> Router {
         .route("/api/info/{id}", post(api_info))
         .fallback(static_or_not_found)
         .with_state(state)
-        .layer(middleware::from_fn(no_cache_headers));
+        .layer(middleware::from_fn(no_cache_headers))
+        .layer(middleware::map_response(csp_header));
 
     if trace_requests {
         router.layer(TraceLayer::new_for_http())
@@ -111,7 +113,10 @@ pub fn app(state: AppState) -> Router {
     }
 }
 
-async fn no_cache_headers(request: Request<Body>, next: Next) -> Response {
+async fn no_cache_headers(mut request: Request<Body>, next: Next) -> Response {
+    // Generate CSP nonce for this request and store in extensions
+    let nonce = base64::engine::general_purpose::STANDARD.encode(rand::random::<[u8; 16]>());
+    request.extensions_mut().insert(nonce);
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
     headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
@@ -131,98 +136,145 @@ async fn no_cache_headers(request: Request<Body>, next: Next) -> Response {
         HeaderName::from_static("referrer-policy"),
         HeaderValue::from_static("no-referrer"),
     );
+    // CSP header will be added by csp_header middleware
+    response
+}
+
+async fn csp_header(response: Response) -> Response {
+    let nonce = response
+        .extensions()
+        .get::<String>()
+        .cloned()
+        .unwrap_or_default();
+    let mut response = response;
+    let headers = response.headers_mut();
+    let csp = format!(
+        "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; script-src 'self' 'nonce-{}'; style-src 'self' 'nonce-{}'",
+        nonce, nonce
+    );
     headers.insert(
         HeaderName::from_static("content-security-policy"),
-        HeaderValue::from_static(
-            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
-        ),
+        HeaderValue::from_str(&csp).unwrap(),
     );
     response
 }
 
-async fn home(State(state): State<AppState>) -> Html<String> {
-    Html(html::home(&state.config))
+async fn home(State(state): State<AppState>, request: Request<Body>) -> Response {
+    let nonce = request
+        .extensions()
+        .get::<String>()
+        .cloned()
+        .unwrap_or_default();
+    let html = html::home(&state.config);
+    let mut response = Html(html).into_response();
+    response.extensions_mut().insert(nonce);
+    response
 }
 
-async fn download_page(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+async fn download_page(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    request: Request<Body>,
+) -> Response {
+    let nonce = request
+        .extensions()
+        .get::<String>()
+        .cloned()
+        .unwrap_or_default();
     if ids::validate_file_id(&id).is_err() {
-        return (
-            StatusCode::NOT_FOUND,
-            HeaderMap::new(),
-            Html(html::not_found(&state.config)),
-        );
+        let html = html::not_found(&state.config);
+        let mut response = (StatusCode::NOT_FOUND, HeaderMap::new(), Html(html)).into_response();
+        response.extensions_mut().insert(nonce);
+        return response;
     }
     let Some(record) = state.store.get(&id).await else {
-        return (
-            StatusCode::NOT_FOUND,
-            HeaderMap::new(),
-            Html(html::not_found(&state.config)),
-        );
+        let html = html::not_found(&state.config);
+        let mut response = (StatusCode::NOT_FOUND, HeaderMap::new(), Html(html)).into_response();
+        response.extensions_mut().insert(nonce);
+        return response;
     };
     let mut headers = HeaderMap::new();
     headers.insert(
         header::WWW_AUTHENTICATE,
         HeaderValue::from_str(&format!("send-v1 {}", record.nonce)).unwrap(),
     );
-    (
-        StatusCode::OK,
-        headers,
-        Html(html::download(
-            &state.config,
-            &id,
-            &record.nonce,
-            record.pwd,
-        )),
-    )
+    let html = html::download(&state.config, &id, &record.nonce, record.pwd);
+    let mut response = (StatusCode::OK, headers, Html(html)).into_response();
+    response.extensions_mut().insert(nonce);
+    response
 }
 
 async fn download_page_with_key(
     State(state): State<AppState>,
     Path((id, _key)): Path<(String, String)>,
-) -> impl IntoResponse {
+    request: Request<Body>,
+) -> Response {
+    let nonce = request
+        .extensions()
+        .get::<String>()
+        .cloned()
+        .unwrap_or_default();
     if ids::validate_file_id(&id).is_err() {
-        return (
-            StatusCode::NOT_FOUND,
-            HeaderMap::new(),
-            Html(html::not_found(&state.config)),
-        );
+        let html = html::not_found(&state.config);
+        let mut response = (StatusCode::NOT_FOUND, HeaderMap::new(), Html(html)).into_response();
+        response.extensions_mut().insert(nonce);
+        return response;
     }
     let Some(record) = state.store.get(&id).await else {
-        return (
-            StatusCode::NOT_FOUND,
-            HeaderMap::new(),
-            Html(html::not_found(&state.config)),
-        );
+        let html = html::not_found(&state.config);
+        let mut response = (StatusCode::NOT_FOUND, HeaderMap::new(), Html(html)).into_response();
+        response.extensions_mut().insert(nonce);
+        return response;
     };
     let mut headers = HeaderMap::new();
     headers.insert(
         header::WWW_AUTHENTICATE,
         HeaderValue::from_str(&format!("send-v1 {}", record.nonce)).unwrap(),
     );
-    (
-        StatusCode::OK,
-        headers,
-        Html(html::download(
-            &state.config,
-            &id,
-            &record.nonce,
-            record.pwd,
-        )),
-    )
+    let html = html::download(&state.config, &id, &record.nonce, record.pwd);
+    let mut response = (StatusCode::OK, headers, Html(html)).into_response();
+    response.extensions_mut().insert(nonce);
+    response
 }
 
-async fn unsupported(State(state): State<AppState>, Path(reason): Path<String>) -> Html<String> {
-    Html(html::unsupported(&state.config, &reason))
+async fn unsupported(
+    State(state): State<AppState>,
+    Path(reason): Path<String>,
+    request: Request<Body>,
+) -> Response {
+    let nonce = request
+        .extensions()
+        .get::<String>()
+        .cloned()
+        .unwrap_or_default();
+    let html = html::unsupported(&state.config, &reason);
+    let mut response = Html(html).into_response();
+    response.extensions_mut().insert(nonce);
+    response
 }
 
-async fn error_page(State(state): State<AppState>) -> Html<String> {
-    Html(html::error(&state.config))
+async fn error_page(State(state): State<AppState>, request: Request<Body>) -> Response {
+    let nonce = request
+        .extensions()
+        .get::<String>()
+        .cloned()
+        .unwrap_or_default();
+    let html = html::error(&state.config);
+    let mut response = Html(html).into_response();
+    response.extensions_mut().insert(nonce);
+    response
 }
 
 async fn static_or_not_found(
     State(state): State<AppState>,
     OriginalUri(uri): OriginalUri,
+    request: Request<Body>,
 ) -> Response {
+    let nonce = request
+        .extensions()
+        .get::<String>()
+        .cloned()
+        .unwrap_or_default();
     let path = uri.path().trim_start_matches('/');
     if !path.is_empty()
         && !path
@@ -233,14 +285,19 @@ async fn static_or_not_found(
         let content_type = mime_guess::from_path(path)
             .first_or_octet_stream()
             .to_string();
-        return (
+        let mut response = (
             StatusCode::OK,
             [(header::CONTENT_TYPE, content_type)],
             bytes,
         )
             .into_response();
+        response.extensions_mut().insert(nonce);
+        return response;
     }
-    (StatusCode::NOT_FOUND, Html(html::not_found(&state.config))).into_response()
+    let html = html::not_found(&state.config);
+    let mut response = (StatusCode::NOT_FOUND, Html(html)).into_response();
+    response.extensions_mut().insert(nonce);
+    response
 }
 
 async fn config(State(state): State<AppState>) -> Json<crate::config::ClientConfig> {

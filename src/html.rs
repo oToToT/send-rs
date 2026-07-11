@@ -47,6 +47,7 @@ pub fn home(config: &Config) -> String {
             "download_counts": config.defaults.download_counts,
             "expire_options": expire_options,
         }),
+        "",
     )
 }
 
@@ -62,6 +63,7 @@ pub fn download(config: &Config, id: &str, nonce: &str, pwd: bool) -> String {
             "download_notice": sanitize_notice(&config.web_ui.download_notice_html),
             "password_required": pwd,
         }),
+        "",
     )
 }
 
@@ -79,6 +81,7 @@ pub fn unsupported(config: &Config, reason: &str) -> String {
         "none,noarchive",
         &json!({}),
         json!({ "message": message }),
+        "",
     )
 }
 
@@ -90,6 +93,7 @@ pub fn error(config: &Config) -> String {
         "none,noarchive",
         &json!({}),
         json!({}),
+        "",
     )
 }
 
@@ -101,6 +105,7 @@ pub fn not_found(config: &Config) -> String {
         "none,noarchive",
         &json!({ "status": 404 }),
         json!({}),
+        "",
     )
 }
 
@@ -111,6 +116,7 @@ fn render_page(
     robots: &str,
     download_metadata: &Value,
     extra: Value,
+    csp_nonce: &str,
 ) -> String {
     let mut context = json!({
         "title": title,
@@ -125,6 +131,7 @@ fn render_page(
         "brand": config.web_ui.custom_title,
         "cli_url": config.web_ui.footer_cli_url,
         "source_url": config.web_ui.footer_source_url,
+        "csp_nonce": csp_nonce,
     });
     context
         .as_object_mut()

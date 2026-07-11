@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="/inter.css">
   <link rel="stylesheet" href="/app.css">
   <link rel="stylesheet" href="/ui.css">
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (function () {
       var preference = 'system';
       try { preference = localStorage.getItem('send-theme') || 'system'; } catch (_) {}
@@ -22,10 +22,10 @@
       document.documentElement.dataset.themePreference = preference;
     })();
   </script>
-  <style>
+  <style nonce="{{ csp_nonce }}">
     :root { --color-primary: {{ primary }}; --color-primary-accent: {{ accent }}; }
   </style>
-  <script>
+  <script nonce="{{ csp_nonce }}">
     var LIMITS={{ limits_json|safe }};
     var WEB_UI={{ web_ui_json|safe }};
     var DEFAULTS={{ defaults_json|safe }};
