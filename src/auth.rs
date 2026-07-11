@@ -67,7 +67,7 @@ pub fn verify_owner_digest(key: &[u8], stored: &str, provided: &str) -> AppResul
 }
 
 pub fn random_owner() -> String {
-    ids::random_hex(10)
+    ids::random_hex(16)
 }
 
 pub fn valid_stored_auth(value: &str) -> bool {
